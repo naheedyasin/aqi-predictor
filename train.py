@@ -10,6 +10,9 @@ import hopsworks
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import GradientBoostingRegressor
+import tensorflow as tf
+from tensorflow import keras
 
 load_dotenv()
 
@@ -71,14 +74,60 @@ def train_and_evaluate(city, horizon):
 
     persistence_predictions = X_test["pm2_5"]
     persistence_r2 = r2_score(y_test, persistence_predictions)
+    
+    gb_model = GradientBoostingRegressor(
+        n_estimators=200,
+        max_depth=4,
+        learning_rate=0.05,
+        min_samples_leaf=20,
+        random_state=42
+    )
+    gb_model.fit(X_train, y_train)
+
+    gb_train_r2 = r2_score(y_train, gb_model.predict(X_train))
+    gb_predictions = gb_model.predict(X_test)
+    gb_rmse = mean_squared_error(y_test, gb_predictions) ** 0.5
+    gb_mae = mean_absolute_error(y_test, gb_predictions)
+    gb_test_r2 = r2_score(y_test, gb_predictions)
+    
+    
+    # Neural network needs scaled inputs (unlike tree-based models) for stable training
+    from sklearn.preprocessing import StandardScaler
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+
+    nn_model = keras.Sequential([
+        keras.layers.Input(shape=(X_train_scaled.shape[1],)),
+        keras.layers.Dense(64, activation="relu"),
+        keras.layers.Dense(32, activation="relu"),
+        keras.layers.Dense(1)
+    ])
+
+    nn_model.compile(optimizer="adam", loss="mse")
+    nn_model.fit(X_train_scaled, y_train, epochs=30, batch_size=32, verbose=0)
+
+    nn_train_r2 = r2_score(y_train, nn_model.predict(X_train_scaled, verbose=0).flatten())
+    nn_predictions = nn_model.predict(X_test_scaled, verbose=0).flatten()
+    nn_rmse = mean_squared_error(y_test, nn_predictions) ** 0.5
+    nn_mae = mean_absolute_error(y_test, nn_predictions)
+    nn_test_r2 = r2_score(y_test, nn_predictions)
 
     return {
         "city": city,
         "horizon": horizon,
-        "train_r2": round(train_r2, 3),
-        "test_rmse": round(rmse, 3),
-        "test_mae": round(mae, 3),
-        "test_r2": round(test_r2, 3),
+        "rf_train_r2": round(train_r2, 3),
+        "rf_test_rmse": round(rmse, 3),
+        "rf_test_mae": round(mae, 3),
+        "rf_test_r2": round(test_r2, 3),
+        "gb_train_r2": round(gb_train_r2, 3),
+        "gb_test_rmse": round(gb_rmse, 3),
+        "gb_test_mae": round(gb_mae, 3),
+        "gb_test_r2": round(gb_test_r2, 3),
+        "nn_train_r2": round(nn_train_r2, 3),
+        "nn_test_rmse": round(nn_rmse, 3),
+        "nn_test_mae": round(nn_mae, 3),
+        "nn_test_r2": round(nn_test_r2, 3),
         "persistence_r2": round(persistence_r2, 3),
     }
 
