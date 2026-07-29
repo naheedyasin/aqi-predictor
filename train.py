@@ -3,6 +3,7 @@
 # Random Forest selected as final model after comparing against Ridge, Gradient Boosting,
 # and a neural network (see git history for full comparison).
 
+import joblib
 import os
 import tempfile
 import pandas as pd
@@ -23,6 +24,8 @@ project = hopsworks.login(
 
 fs = project.get_feature_store()
 print(f"Connected to feature store: {fs.name}")
+
+mr = project.get_model_registry()
 
 CITIES = ["karachi", "lahore", "islamabad"]
 HORIZONS = ["24h", "48h", "72h"]
@@ -87,11 +90,30 @@ def train_and_evaluate(city, horizon):
 
 if __name__ == "__main__":
     results = []
+    os.makedirs("saved_models", exist_ok=True)
+
     for city in CITIES:
         for horizon in HORIZONS:
             print(f"Training {city} / {horizon}...")
             result = train_and_evaluate(city, horizon)
             results.append(result)
+
+            # Save model to local file first (Hopsworks needs a file path to upload)
+            model_filename = f"saved_models/rf_{city}_{horizon}.pkl"
+            joblib.dump(result["model"], model_filename)
+
+            # Register with Hopsworks Model Registry
+            model_registry_entry = mr.python.create_model(
+                name=f"aqi_rf_{city}_{horizon}",
+                metrics={
+                    "test_r2": result["test_r2"],
+                    "test_rmse": result["test_rmse"],
+                    "test_mae": result["test_mae"],
+                },
+                description=f"Random Forest predicting PM2.5 {horizon} ahead for {city.capitalize()}"
+            )
+            model_registry_entry.save(model_filename)
+            print(f"Registered model: aqi_rf_{city}_{horizon}")
 
     results_df = pd.DataFrame([{k: v for k, v in r.items() if k != "model"} for r in results])
     print("\n=== Final Results ===")
