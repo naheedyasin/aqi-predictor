@@ -1,11 +1,27 @@
 # Trains Random Forest to predict PM2.5 at 24h/48h/72h ahead, for each city.
+# Reads features from Hopsworks Feature Store (not local CSVs).
 # Configuration proven on Karachi/24h baseline (RF beat Ridge and naive persistence).
-# Loops the same logic across all cities and horizons, saving metrics for comparison.
 
+import os
+import tempfile
 import pandas as pd
+from dotenv import load_dotenv
+import hopsworks
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.ensemble import RandomForestRegressor
+
+load_dotenv()
+
+temp_dir = tempfile.gettempdir()
+
+project = hopsworks.login(
+    api_key_value=os.getenv("HOPSWORKS_API_KEY"),
+    cert_folder=temp_dir
+)
+
+fs = project.get_feature_store()
+print(f"Connected to feature store: {fs.name}")
 
 CITIES = ["karachi", "lahore", "islamabad"]
 HORIZONS = ["24h", "48h", "72h"]
@@ -20,7 +36,9 @@ feature_columns = [
 ]
 
 def train_and_evaluate(city, horizon):
-    df = pd.read_csv(f"data/features_{city}.csv")
+    fg = fs.get_feature_group(name=f"aqi_features_{city}", version=1)
+    df = fg.read()
+
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df = df.sort_values("timestamp").reset_index(drop=True)
 
