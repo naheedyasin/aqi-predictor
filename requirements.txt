@@ -6,3 +6,4 @@ matplotlib
 numpy
 hopsworks
 pyarrow
+confluent-kafka
