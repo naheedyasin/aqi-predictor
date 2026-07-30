@@ -45,12 +45,15 @@ def train_and_evaluate(city, horizon):
 
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df = df.sort_values("timestamp").reset_index(drop=True)
+    
+    target_column = f"target_pm25_{horizon}"
+    
+    df = df.dropna(subset=feature_columns + [target_column])
 
     split_index = int(len(df) * 0.8)
     train_df = df.iloc[:split_index]
     test_df = df.iloc[split_index:]
 
-    target_column = f"target_pm25_{horizon}"
 
     X_train = train_df[feature_columns]
     y_train = train_df[target_column]
