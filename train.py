@@ -94,6 +94,7 @@ def train_and_evaluate(city, horizon):
 if __name__ == "__main__":
     results = []
     os.makedirs("saved_models", exist_ok=True)
+    os.makedirs("data", exist_ok=True)
 
     for city in CITIES:
         for horizon in HORIZONS:
