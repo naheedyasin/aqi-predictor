@@ -1,7 +1,7 @@
-# Trains Random Forest to predict PM2.5 at 24h/48h/72h ahead, for each city.
+# Trains Random Forest to predict AQI (US EPA scale) directly at 24h/48h/72h ahead, for each city.
 # Reads features from Hopsworks Feature Store (not local CSVs).
-# Random Forest selected as final model after comparing against Ridge, Gradient Boosting,
-# and a neural network (see git history for full comparison).
+# Switched from predicting PM2.5 (then converting) to predicting AQI directly,
+# avoids compounding error through the conversion formula.
 
 import joblib
 import os
@@ -39,21 +39,38 @@ feature_columns = [
     "aqi_change_rate"
 ]
 
+
+def pm25_to_aqi(pm25):
+    """Same EPA breakpoint formula as feature_engineering.py - used here only
+    to build the persistence baseline (naive: 'AQI stays the same as now')."""
+    breakpoints = [
+        (0.0, 12.0, 0, 50), (12.1, 35.4, 51, 100), (35.5, 55.4, 101, 150),
+        (55.5, 150.4, 151, 200), (150.5, 250.4, 201, 300),
+        (250.5, 350.4, 301, 400), (350.5, 500.4, 401, 500),
+    ]
+    if pd.isna(pm25):
+        return None
+    pm25 = max(0.0, pm25)
+    for c_lo, c_hi, i_lo, i_hi in breakpoints:
+        if c_lo <= pm25 <= c_hi:
+            return round((i_hi - i_lo) / (c_hi - c_lo) * (pm25 - c_lo) + i_lo)
+    return 500
+
+
 def train_and_evaluate(city, horizon):
     fg = fs.get_feature_group(name=f"aqi_features_{city}", version=1)
     df = fg.read()
 
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df = df.sort_values("timestamp").reset_index(drop=True)
-    
-    target_column = f"target_pm25_{horizon}"
-    
+
+    target_column = f"target_aqi_us_{horizon}"
+
     df = df.dropna(subset=feature_columns + [target_column])
 
     split_index = int(len(df) * 0.8)
     train_df = df.iloc[:split_index]
     test_df = df.iloc[split_index:]
-
 
     X_train = train_df[feature_columns]
     y_train = train_df[target_column]
@@ -76,7 +93,7 @@ def train_and_evaluate(city, horizon):
     mae = mean_absolute_error(y_test, predictions)
     test_r2 = r2_score(y_test, predictions)
 
-    persistence_predictions = X_test["pm2_5"]
+    persistence_predictions = X_test["pm2_5"].apply(pm25_to_aqi)
     persistence_r2 = r2_score(y_test, persistence_predictions)
 
     return {
@@ -102,11 +119,9 @@ if __name__ == "__main__":
             result = train_and_evaluate(city, horizon)
             results.append(result)
 
-            # Save model to local file first (Hopsworks needs a file path to upload)
             model_filename = f"saved_models/rf_{city}_{horizon}.pkl"
             joblib.dump(result["model"], model_filename)
 
-            # Register with Hopsworks Model Registry
             model_registry_entry = mr.python.create_model(
                 name=f"aqi_rf_{city}_{horizon}",
                 metrics={
@@ -114,7 +129,7 @@ if __name__ == "__main__":
                     "test_rmse": result["test_rmse"],
                     "test_mae": result["test_mae"],
                 },
-                description=f"Random Forest predicting PM2.5 {horizon} ahead for {city.capitalize()}"
+                description=f"Random Forest predicting AQI {horizon} ahead for {city.capitalize()}"
             )
             model_registry_entry.save(model_filename)
             print(f"Registered model: aqi_rf_{city}_{horizon}")

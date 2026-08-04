@@ -28,6 +28,23 @@ project = hopsworks.login(
 fs = project.get_feature_store()
 
 
+def pm25_to_aqi(pm25):
+    """Same EPA breakpoint formula as feature_engineering.py - keeps live
+    hourly data consistent with the historical backfill's target columns."""
+    breakpoints = [
+        (0.0, 12.0, 0, 50), (12.1, 35.4, 51, 100), (35.5, 55.4, 101, 150),
+        (55.5, 150.4, 151, 200), (150.5, 250.4, 201, 300),
+        (250.5, 350.4, 301, 400), (350.5, 500.4, 401, 500),
+    ]
+    if pd.isna(pm25):
+        return None
+    pm25 = max(0.0, pm25)
+    for c_lo, c_hi, i_lo, i_hi in breakpoints:
+        if c_lo <= pm25 <= c_hi:
+            return round((i_hi - i_lo) / (c_hi - c_lo) * (pm25 - c_lo) + i_lo)
+    return 500
+
+
 def fetch_current(lat, lon):
     url = "http://api.openweathermap.org/data/2.5/air_pollution"
     params = {"lat": lat, "lon": lon, "appid": API_KEY}
@@ -123,6 +140,11 @@ def process_city(city):
     combined["target_pm25_24h"] = combined["pm2_5"].shift(-24)
     combined["target_pm25_48h"] = combined["pm2_5"].shift(-48)
     combined["target_pm25_72h"] = combined["pm2_5"].shift(-72)
+
+    # NEW: US EPA AQI targets, kept consistent with feature_engineering.py
+    combined["target_aqi_us_24h"] = combined["pm2_5"].shift(-24).apply(pm25_to_aqi)
+    combined["target_aqi_us_48h"] = combined["pm2_5"].shift(-48).apply(pm25_to_aqi)
+    combined["target_aqi_us_72h"] = combined["pm2_5"].shift(-72).apply(pm25_to_aqi)
 
     latest_row = combined.tail(1)
 
