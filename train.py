@@ -12,6 +12,7 @@ import hopsworks
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.ensemble import RandomForestRegressor
+import time
 
 load_dotenv()
 
@@ -106,6 +107,23 @@ def train_and_evaluate(city, horizon):
         "test_r2": round(test_r2, 3),
         "persistence_r2": round(persistence_r2, 3),
     }
+    
+def register_model_with_retry(mr, model_filename, name, metrics, description, max_retries=3):
+    for attempt in range(1, max_retries + 1):
+        try:
+            model_registry_entry = mr.python.create_model(
+                name=name,
+                metrics=metrics,
+                description=description
+            )
+            model_registry_entry.save(model_filename)
+            return True
+        except Exception as e:
+            print(f"Registration attempt {attempt}/{max_retries} failed for {name}: {e}")
+            if attempt == max_retries:
+                print(f"Skipping registration for {name} after {max_retries} failed attempts.")
+                return False
+            time.sleep(15)
 
 
 if __name__ == "__main__":
@@ -122,17 +140,18 @@ if __name__ == "__main__":
             model_filename = f"saved_models/rf_{city}_{horizon}.pkl"
             joblib.dump(result["model"], model_filename)
 
-            model_registry_entry = mr.python.create_model(
+            success = register_model_with_retry(
+                mr, model_filename,
                 name=f"aqi_rf_{city}_{horizon}",
                 metrics={
                     "test_r2": result["test_r2"],
                     "test_rmse": result["test_rmse"],
                     "test_mae": result["test_mae"],
                 },
-                description=f"Random Forest predicting AQI {horizon} ahead for {city.capitalize()}"
+                description=f"Random Forest predicting AQI (US EPA scale) {horizon} ahead for {city.capitalize()}"
             )
-            model_registry_entry.save(model_filename)
-            print(f"Registered model: aqi_rf_{city}_{horizon}")
+            if success:
+                print(f"Registered model: aqi_rf_{city}_{horizon}")
 
     results_df = pd.DataFrame([{k: v for k, v in r.items() if k != "model"} for r in results])
     print("\n=== Final Results ===")
