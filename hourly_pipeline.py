@@ -133,7 +133,8 @@ def process_city(city):
     recent_raw = recent_df[raw_cols].tail(48).copy()
 
     raw_data = fetch_current(city["lat"], city["lon"])
-    new_row = build_row(raw_data, city["name"])
+    weather = fetch_current_weather(city["lat"], city["lon"])
+    new_row = build_row(raw_data, weather, city["name"])
 
     combined = pd.concat([recent_raw, pd.DataFrame([new_row])], ignore_index=True)
     combined = combined.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
