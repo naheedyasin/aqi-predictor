@@ -52,8 +52,27 @@ def fetch_current(lat, lon):
     response.raise_for_status()
     return response.json()
 
+def fetch_current_weather(lat, lon):
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "current": "temperature_2m,wind_speed_10m,relative_humidity_2m,surface_pressure",
+        "timezone": "UTC",
+    }
+    response = requests.get(url, params=params)
+    response.raise_for_status()
+    data = response.json()
+    current = data["current"]
+    return {
+        "temperature": current["temperature_2m"],
+        "wind_speed": current["wind_speed_10m"],
+        "humidity": current["relative_humidity_2m"],
+        "pressure": current["surface_pressure"],
+    }
 
-def build_row(data, city_name):
+
+def build_row(data, weather, city_name):
     entry = data["list"][0]
     return {
         "timestamp": datetime.fromtimestamp(entry["dt"], tz=timezone.utc),
@@ -67,6 +86,10 @@ def build_row(data, city_name):
         "pm2_5": entry["components"]["pm2_5"],
         "pm10": entry["components"]["pm10"],
         "nh3": entry["components"]["nh3"],
+        "temperature": weather["temperature"],
+        "wind_speed": weather["wind_speed"],
+        "humidity": weather["humidity"],
+        "pressure": weather["pressure"],
     }
 
 
@@ -106,7 +129,7 @@ def process_city(city):
     recent_df["timestamp"] = pd.to_datetime(recent_df["timestamp"])
     recent_df = recent_df.sort_values("timestamp").reset_index(drop=True)
 
-    raw_cols = ["timestamp", "city", "aqi", "co", "no", "no2", "o3", "so2", "pm2_5", "pm10", "nh3"]
+    raw_cols = ["timestamp", "city", "aqi", "co", "no", "no2", "o3", "so2", "pm2_5", "pm10", "nh3","temperature", "wind_speed", "humidity", "pressure"]
     recent_raw = recent_df[raw_cols].tail(48).copy()
 
     raw_data = fetch_current(city["lat"], city["lon"])

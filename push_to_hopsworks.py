@@ -21,6 +21,8 @@ CITIES = ["karachi", "lahore", "islamabad"]
 def push_city_features(city):
     df = pd.read_csv(f"data/features_{city}.csv")
     df["timestamp"] = pd.to_datetime(df["timestamp"])
+    weather_cols = ["temperature", "wind_speed", "humidity", "pressure"]
+    df[weather_cols] = df[weather_cols].astype(float)
 
     fg = fs.get_or_create_feature_group(
         name=f"aqi_features_{city}",

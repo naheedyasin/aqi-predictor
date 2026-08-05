@@ -5,6 +5,10 @@
 import pandas as pd
 import numpy as np
 
+def load_weather_data(city):
+    weather_df = pd.read_csv(f"data/raw_historical_weather_{city}.csv")
+    weather_df["timestamp"] = pd.to_datetime(weather_df["timestamp"], utc=True)
+    return weather_df
 
 CITIES = ["karachi", "lahore", "islamabad"]
 
@@ -28,6 +32,14 @@ def pm25_to_aqi(pm25):
 
 def build_features(city):
     df = pd.read_csv(f"data/raw_historical_aqi_{city}.csv")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    
+    # Merge in historical weather (temperature, wind, humidity, pressure)
+    weather_df = load_weather_data(city)
+    df = df.merge(
+        weather_df[["timestamp", "temperature", "wind_speed", "humidity", "pressure"]],
+        on="timestamp", how="left"
+    )
 
     # time-based features
     df["timestamp"] = pd.to_datetime(df["timestamp"])

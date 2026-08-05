@@ -37,7 +37,7 @@ feature_columns = [
     "aqi_lag_1h", "aqi_lag_3h", "aqi_lag_24h",
     "pm25_lag_1h", "pm25_lag_3h", "pm25_lag_24h",
     "pm2_5_rolling_24h_mean",
-    "aqi_change_rate"
+    "aqi_change_rate","temperature", "wind_speed", "humidity", "pressure"
 ]
 
 
