@@ -6,13 +6,19 @@ import time
 import tempfile
 import requests
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 import hopsworks
+from hsfs.feature import Feature
 
 load_dotenv()
 
 API_KEY = os.getenv("OPENWEATHER_API_KEY")
+
+# Timeout (seconds) for all outbound HTTP calls. Without this, a slow or
+# hanging upstream API (this bit us with Open-Meteo) can stall the whole
+# GitHub Actions run indefinitely instead of failing fast.
+REQUEST_TIMEOUT = 10
 
 CITIES = [
     {"name": "karachi", "lat": 24.8607, "lon": 67.0011},
@@ -48,7 +54,7 @@ def pm25_to_aqi(pm25):
 def fetch_current(lat, lon):
     url = "http://api.openweathermap.org/data/2.5/air_pollution"
     params = {"lat": lat, "lon": lon, "appid": API_KEY}
-    response = requests.get(url, params=params)
+    response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
     response.raise_for_status()
     return response.json()
 
@@ -60,7 +66,7 @@ def fetch_current_weather(lat, lon):
         "current": "temperature_2m,wind_speed_10m,relative_humidity_2m,surface_pressure",
         "timezone": "UTC",
     }
-    response = requests.get(url, params=params)
+    response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
     response.raise_for_status()
     data = response.json()
     current = data["current"]
@@ -94,9 +100,14 @@ def build_row(data, weather, city_name):
 
 
 def read_with_retry(fg, city_name, max_retries=3):
+    # Only pull the last ~72h instead of the full offline table. This
+    # filter is pushed down by Hopsworks, so it's the difference between
+    # scanning the whole feature group (slower every week) and scanning a
+    # fixed, small window every run.
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=72)
     for attempt in range(1, max_retries + 1):
         try:
-            return fg.read()
+            return fg.filter(Feature("timestamp") >= cutoff).read()
         except Exception as e:
             print(f"Read attempt {attempt}/{max_retries} failed for {city_name}: {e}")
             if attempt == max_retries:
