@@ -105,9 +105,13 @@ def read_with_retry(fg, city_name, max_retries=3):
     # scanning the whole feature group (slower every week) and scanning a
     # fixed, small window every run.
     cutoff = datetime.now(timezone.utc) - timedelta(hours=72)
+    # Hopsworks' query API expects a plain string here, not a tz-aware
+    # datetime with microseconds - passing the raw object causes a 422
+    # ("argument was not provided or it was malformed").
+    cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
     for attempt in range(1, max_retries + 1):
         try:
-            return fg.filter(Feature("timestamp") >= cutoff).read()
+            return fg.filter(Feature("timestamp") >= cutoff_str).read()
         except Exception as e:
             print(f"Read attempt {attempt}/{max_retries} failed for {city_name}: {e}")
             if attempt == max_retries:
