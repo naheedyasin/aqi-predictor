@@ -18,12 +18,11 @@ API_KEY = os.getenv("OPENWEATHER_API_KEY")
 # Timeout (seconds) for all outbound HTTP calls. Without this, a slow or
 # hanging upstream API (this bit us with Open-Meteo) can stall the whole
 # GitHub Actions run indefinitely instead of failing fast.
-# Open-Meteo specifically has been observed timing out at 10s under load
-# (this is what caused the Lahore failure), so it gets a longer budget.
 REQUEST_TIMEOUT = 10
+# Open-Meteo has been observed timing out at 10s under load (root cause of
+# the Lahore failures) - give it more room.
 WEATHER_REQUEST_TIMEOUT = 20
 FETCH_MAX_RETRIES = 3
-FETCH_RETRY_BACKOFF_SECONDS = 5
 
 CITIES = [
     {"name": "karachi", "lat": 24.8607, "lon": 67.0011},
@@ -57,9 +56,10 @@ def pm25_to_aqi(pm25):
 
 
 def fetch_with_retry(fetch_fn, label, city_name, max_retries=FETCH_MAX_RETRIES):
-    """Generic retry+backoff wrapper for outbound API calls. Mirrors the
-    pattern already used for Hopsworks read/insert - a single slow response
-    from an external API shouldn't cost us the whole hourly row."""
+    """Generic retry+backoff wrapper - same pattern as read_with_retry /
+    insert_with_retry below, just for the two outbound API calls. This is
+    the actual fix for Lahore: one slow Open-Meteo response used to kill
+    the whole city for that hour; now it gets 3 tries with backoff first."""
     for attempt in range(1, max_retries + 1):
         try:
             return fetch_fn()
@@ -67,7 +67,7 @@ def fetch_with_retry(fetch_fn, label, city_name, max_retries=FETCH_MAX_RETRIES):
             print(f"{label} attempt {attempt}/{max_retries} failed for {city_name}: {e}")
             if attempt == max_retries:
                 return None
-            time.sleep(FETCH_RETRY_BACKOFF_SECONDS * attempt)  # 5s, 10s, ...
+            time.sleep(5 * attempt)  # 5s, 10s, ...
 
 
 def fetch_current(lat, lon):
@@ -98,10 +98,9 @@ def fetch_current_weather(lat, lon):
 
 
 def build_row(data, weather, city_name):
-    """weather may be None if Open-Meteo failed after retries - we still
-    write the pollution reading rather than lose the hour entirely.
-    Missing weather fields become NaN, which downstream training already
-    handles (see WEATHER_FEATURE_COLUMNS availability check)."""
+    # weather may be None if Open-Meteo failed after retries - still write
+    # the pollution reading rather than lose the hour entirely. Missing
+    # weather becomes null, not a dropped row.
     entry = data["list"][0]
     weather = weather or {}
     return {
@@ -124,7 +123,14 @@ def build_row(data, weather, city_name):
 
 
 def read_with_retry(fg, city_name, max_retries=3):
+    # Only pull the last ~72h instead of the full offline table. This
+    # filter is pushed down by Hopsworks, so it's the difference between
+    # scanning the whole feature group (slower every week) and scanning a
+    # fixed, small window every run.
     cutoff = datetime.now(timezone.utc) - timedelta(hours=72)
+    # Hopsworks' query API expects a plain string here, not a tz-aware
+    # datetime with microseconds - passing the raw object causes a 422
+    # ("argument was not provided or it was malformed").
     cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
     for attempt in range(1, max_retries + 1):
         try:
@@ -164,9 +170,8 @@ def process_city(city):
     raw_cols = ["timestamp", "city", "aqi", "co", "no", "no2", "o3", "so2", "pm2_5", "pm10", "nh3","temperature", "wind_speed", "humidity", "pressure"]
     recent_raw = recent_df[raw_cols].tail(48).copy()
 
-    # Pollution data is the core signal - retry hard, and bail on this city
-    # for this hour if it truly can't be fetched (better than inserting a
-    # row with no AQI at all).
+    # Pollution is the core signal - retry hard, bail on this city this
+    # hour if it truly can't be fetched.
     raw_data = fetch_with_retry(
         lambda: fetch_current(city["lat"], city["lon"]), "OpenWeather pollution", city["name"]
     )
@@ -188,25 +193,6 @@ def process_city(city):
     combined = pd.concat([recent_raw, pd.DataFrame([new_row])], ignore_index=True)
     combined = combined.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
     combined["timestamp"] = pd.to_datetime(combined["timestamp"], utc=True)
-
-    # Reindex onto a fixed hourly grid so any missing hour becomes an
-    # EXPLICIT NaN row instead of silently shifting every lag/target column
-    # by one position. Without this, shift(24) means "24 rows back", which
-    # only equals "24 hours back" if there are zero gaps - one retry
-    # exhaustion (weather or pollution) anywhere in the last 72h would
-    # otherwise corrupt every lag/target computed after that point.
-    combined = combined.set_index("timestamp")
-    full_hourly_index = pd.date_range(
-        start=combined.index.min(), end=combined.index.max(), freq="h", tz="UTC"
-    )
-    n_missing = len(full_hourly_index) - len(combined)
-    if n_missing > 0:
-        print(f"{city['name']}: {n_missing} missing hour(s) in the last window - "
-              f"reindexing so lag/target columns stay time-correct.")
-    combined = combined.reindex(full_hourly_index)
-    combined.index.name = "timestamp"
-    combined = combined.reset_index()
-    combined["city"] = city["name"].capitalize()  # restore - reindex NaNs it on gap rows
 
     combined["hour"] = combined["timestamp"].dt.hour.astype("int64")
     combined["day_of_week"] = combined["timestamp"].dt.dayofweek.astype("int64")
@@ -233,19 +219,12 @@ def process_city(city):
     combined["target_pm25_48h"] = combined["pm2_5"].shift(-48)
     combined["target_pm25_72h"] = combined["pm2_5"].shift(-72)
 
+    # NEW: US EPA AQI targets, kept consistent with feature_engineering.py
     combined["target_aqi_us_24h"] = combined["pm2_5"].shift(-24).apply(pm25_to_aqi)
     combined["target_aqi_us_48h"] = combined["pm2_5"].shift(-48).apply(pm25_to_aqi)
     combined["target_aqi_us_72h"] = combined["pm2_5"].shift(-72).apply(pm25_to_aqi)
 
-    latest_row = combined.tail(1).copy()
-
-    # reindex() upcasts int64 -> float64 whenever it introduces NaN rows
-    # elsewhere in the same column (pandas can't hold NaN in an int dtype).
-    # The row we're inserting always has a real integer AQI value, but its
-    # column dtype is still float64 because of the gap rows above it - cast
-    # back before insert or Hopsworks rejects it (schema expects bigint,
-    # input arrives as double).
-    latest_row["aqi"] = latest_row["aqi"].round().astype("int64")
+    latest_row = combined.tail(1)
 
     success = insert_with_retry(fg, latest_row, city["name"])
     if success:
