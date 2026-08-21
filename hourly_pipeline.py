@@ -237,7 +237,15 @@ def process_city(city):
     combined["target_aqi_us_48h"] = combined["pm2_5"].shift(-48).apply(pm25_to_aqi)
     combined["target_aqi_us_72h"] = combined["pm2_5"].shift(-72).apply(pm25_to_aqi)
 
-    latest_row = combined.tail(1)
+    latest_row = combined.tail(1).copy()
+
+    # reindex() upcasts int64 -> float64 whenever it introduces NaN rows
+    # elsewhere in the same column (pandas can't hold NaN in an int dtype).
+    # The row we're inserting always has a real integer AQI value, but its
+    # column dtype is still float64 because of the gap rows above it - cast
+    # back before insert or Hopsworks rejects it (schema expects bigint,
+    # input arrives as double).
+    latest_row["aqi"] = latest_row["aqi"].round().astype("int64")
 
     success = insert_with_retry(fg, latest_row, city["name"])
     if success:
