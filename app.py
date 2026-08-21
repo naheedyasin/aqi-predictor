@@ -27,7 +27,7 @@ FEATURE_COLUMNS = [
     "aqi_lag_1h", "aqi_lag_3h", "aqi_lag_24h",
     "pm25_lag_1h", "pm25_lag_3h", "pm25_lag_24h",
     "pm2_5_rolling_24h_mean",
-    "aqi_change_rate"
+    "aqi_change_rate", "temperature", "wind_speed", "humidity", "pressure"
 ]
 FEATURE_LABELS = {
     "aqi": "Current AQI", "co": "CO", "no": "NO", "no2": "NO2", "o3": "O3", "so2": "SO2",
@@ -737,33 +737,41 @@ with poll_col:
 """, unsafe_allow_html=True)
 
 with weather_col:
-    if weather:
-        owm_icon_url = f"https://openweathermap.org/img/wn/{weather['icon']}@2x.png"
-        st.markdown(f"""
+    ow_weather = load_weather(city)  # only for icon + description, not the numbers
+
+    display_temp = latest_row["temperature"].values[0]
+    display_humidity = latest_row["humidity"].values[0]
+    display_wind = latest_row["wind_speed"].values[0]
+    display_pressure = latest_row["pressure"].values[0]
+
+    if ow_weather:
+        owm_icon_url = f"https://openweathermap.org/img/wn/{ow_weather['icon']}@2x.png"
+        weather_desc = ow_weather["description"]
+    else:
+        owm_icon_url = ""
+        weather_desc = ""
+
+    st.markdown(f"""
 <div class="card weather-card" style="--sky:{current_color};">
 <div class="card-label">Current Conditions</div>
 <div class="weather-hero">
-<img src="{owm_icon_url}" alt="{weather['description']}" />
+<img src="{owm_icon_url}" alt="{weather_desc}" />
 <div class="weather-hero-main">
-<div class="weather-hero-temp">{weather['temp']:.0f}°C</div>
-<div class="weather-hero-desc">{weather['description']}</div>
+<div class="weather-hero-temp">{display_temp:.0f}°C</div>
+<div class="weather-hero-desc">{weather_desc}</div>
 </div>
 </div>
 <div class="weather-grid">
-<div class="weather-tile"><div class="weather-tile-icon">{ICONS['feels']}</div>
-<div><div class="weather-tile-value">{weather['feels_like']:.0f}°C</div><div class="weather-tile-label">Feels like</div></div></div>
 <div class="weather-tile"><div class="weather-tile-icon">{ICONS['droplet']}</div>
-<div><div class="weather-tile-value">{weather['humidity']}%</div><div class="weather-tile-label">Humidity</div></div></div>
+<div><div class="weather-tile-value">{display_humidity:.0f}%</div><div class="weather-tile-label">Humidity</div></div></div>
 <div class="weather-tile"><div class="weather-tile-icon">{ICONS['wind']}</div>
-<div><div class="weather-tile-value">{weather['wind_speed']:.1f} m/s</div><div class="weather-tile-label">Wind</div></div></div>
+<div><div class="weather-tile-value">{display_wind:.1f} km/h</div><div class="weather-tile-label">Wind</div></div></div>
 <div class="weather-tile"><div class="weather-tile-icon">{ICONS['gauge']}</div>
-<div><div class="weather-tile-value">{weather['pressure']} hPa</div><div class="weather-tile-label">Pressure</div></div></div>
+<div><div class="weather-tile-value">{display_pressure:.0f} hPa</div><div class="weather-tile-label">Pressure</div></div></div>
 </div>
 </div>
 """, unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="card weather-card"><div class="card-label">Current Conditions</div><p style="color:var(--muted); font-size:0.8rem;">Weather data unavailable</p></div>', unsafe_allow_html=True)
-
+    
 # 24h historical trend 
 st.markdown('<div class="section-title">24-Hour PM2.5 Trend</div>', unsafe_allow_html=True)
 st.markdown('<div class="section-sub">Air quality changes over the last 24 hours (PKT)</div>', unsafe_allow_html=True)
