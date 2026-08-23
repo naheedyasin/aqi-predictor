@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 import hopsworks
 import shap
 
-# Page setup
 load_dotenv()
 st.set_page_config(page_title="AQI Predictor", page_icon="◐", layout="wide", initial_sidebar_state="collapsed")
 
@@ -38,7 +37,6 @@ FEATURE_LABELS = {
     "pm2_5_rolling_24h_mean": "24h avg PM2.5", "aqi_change_rate": "AQI change rate",
 }
 
-# Pollutant chips: a fixed accent color + icon per pollutant, sensor-panel style
 POLLUTANT_META = {
     "PM2.5": {"color": "#E63950", "icon": "◆", "key": "pm2_5", "unit": "µg/m³"},
     "PM10":  {"color": "#FF6B35", "icon": "◆", "key": "pm10",  "unit": "µg/m³"},
@@ -48,8 +46,6 @@ POLLUTANT_META = {
     "CO":    {"color": "#64748B", "icon": "●", "key": "co",    "unit": "µg/m³"},
 }
 
-# Minimalist line-icon set (SVG, tinted via `currentColor`) used across the
-# header logo and the Current Conditions card, replacing emoji glyphs.
 ICONS = {
     "logo": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7.2 18h9.8a3.8 3.8 0 0 0 .5-7.57A5.3 5.3 0 0 0 7.4 9.4 3.8 3.8 0 0 0 7.2 18Z"/></svg>',
     "thermo": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2 2 0 0 0-4 0v11.26a4 4 0 1 0 4 0Z"/></svg>',
@@ -509,13 +505,36 @@ def load_features(_project, city):
     return df.sort_values("timestamp").reset_index(drop=True)
 
 
-@st.cache_resource(show_spinner=False)
+# @st.cache_resource(ttl=300, show_spinner=False)
 def load_model(_project, city, horizon):
     mr = _project.get_model_registry()
-    all_versions = mr.get_models(name=f"aqi_rf_{city}_{horizon}")
-    latest = max(all_versions, key=lambda m: m.version)
+
+    model_name = f"aqi_rf_{city}_{horizon}"
+
+    all_versions = mr.get_models(name=model_name)
+
+    if not all_versions:
+        raise ValueError(
+            f"No models found for {model_name}"
+        )
+
+    # Always select the highest version number
+    latest = max(
+        all_versions,
+        key=lambda m: int(m.version)
+    )
+
+    # print(
+    #     f"Loading {model_name} - Hopsworks version {latest.version}"
+    # )
+
     model_dir = latest.download()
-    model_path = os.path.join(model_dir, f"rf_{city}_{horizon}.pkl")
+
+    model_path = os.path.join(
+        model_dir,
+        f"rf_{city}_{horizon}.pkl"
+    )
+
     return joblib.load(model_path)
 
 
@@ -523,7 +542,7 @@ def load_model(_project, city, horizon):
 def get_model_rmse(_project, city, horizon):
     mr = _project.get_model_registry()
     all_versions = mr.get_models(name=f"aqi_rf_{city}_{horizon}")
-    latest = max(all_versions, key=lambda m: m.version)
+    latest = max(all_versions, key=lambda m: int(m.version))
     metrics = latest.training_metrics or {}
     return metrics.get("test_rmse")
 
@@ -613,6 +632,7 @@ div[class*="st-key-refresh_btn_wrap"] .stButton button { animation: spin-refresh
 if refresh_clicked:
     st.session_state.is_refreshing = True
     st.cache_data.clear()
+    st.cache_resource.clear()
     st.rerun()
 
 city = selected_city.lower()
@@ -624,24 +644,80 @@ try:
 except Exception:
     st.error("Couldn't load data from Hopsworks right now. Please try refreshing the page.")
     st.stop()
+    
+# st.write(f"Loading models for: {city}")
 
 models = {horizon: load_model(project, city, horizon) for horizon in HORIZONS}
+
+mr = project.get_model_registry()
+
+for horizon in HORIZONS:
+    model_name = f"aqi_rf_{city}_{horizon}"
+
+    versions = mr.get_models(name=model_name)
+
+    if versions:
+        latest_version = max(
+            versions,
+            key=lambda m: int(m.version)
+        ).version
+
+        # st.write(
+        #     f"{model_name}: latest Hopsworks version = {latest_version}"
+        # )
+        
 rmse_values = {horizon: get_model_rmse(project, city, horizon) for horizon in HORIZONS}
 weather = load_weather(city)
 
-latest_row = df.dropna(subset=FEATURE_COLUMNS).tail(1)
-if len(latest_row) == 0:
-    st.error("Not enough recent data to make a prediction for this city.")
+df = df.sort_values("timestamp").reset_index(drop=True)
+
+if df.empty:
+    st.error("No data is available for this city.")
     st.stop()
 
-X_latest = latest_row[FEATURE_COLUMNS]
-current_pm25 = latest_row["pm2_5"].values[0]
+latest_idx = df["timestamp"].idxmax()
+latest_timestamp = df.loc[latest_idx, "timestamp"]
+
+# Start from the newest row, regardless of missing values.
+latest_data = df.loc[latest_idx].copy()
+
+# For any missing feature, use the most recent available
+# value for that feature.
+for feature in FEATURE_COLUMNS:
+    if pd.isna(latest_data.get(feature)):
+        previous_values = df.loc[
+            (df["timestamp"] <= latest_timestamp) &
+            df[feature].notna(),
+            ["timestamp", feature]
+        ].sort_values("timestamp")
+
+        if not previous_values.empty:
+            latest_data[feature] = previous_values.iloc[-1][feature]
+
+# Make sure every feature required by the model exists.
+missing_features = [
+    feature
+    for feature in FEATURE_COLUMNS
+    if pd.isna(latest_data.get(feature))
+]
+
+if missing_features:
+    st.error(
+        "The latest data exists, but these required model features "
+        f"are unavailable: {', '.join(missing_features)}"
+    )
+    st.stop()
+
+# Convert the latest row into the format expected by the model.
+X_latest = pd.DataFrame(
+    [latest_data[FEATURE_COLUMNS].to_dict()],
+    columns=FEATURE_COLUMNS
+)
+
+current_pm25 = float(latest_data["pm2_5"])
 current_aqi = pm25_to_aqi(current_pm25)
 current_category, current_color = aqi_category(current_aqi)
 
-# ambient page wash — a tint of the current severity color layered over the
-# base atmosphere gradient, so the whole page quietly reflects conditions.
-# Keeps the same slow drift animation as the base .stApp rule above.
 st.markdown(f"""
 <style>
 .stApp {{
@@ -657,7 +733,7 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-last_updated_utc = pd.to_datetime(latest_row["timestamp"].values[0], utc=True)
+last_updated_utc = pd.to_datetime(latest_timestamp, utc=True)
 last_updated_pkt = last_updated_utc.tz_convert(PKT)
 
 predicted_aqis_raw = {h: models[h].predict(X_latest)[0] for h in HORIZONS}
@@ -725,7 +801,7 @@ poll_col, weather_col = st.columns([2.4, 1], gap="medium")
 with poll_col:
     cols = st.columns(3, gap="small")
     for i, (name, meta) in enumerate(POLLUTANT_META.items()):
-        value = latest_row[meta["key"]].values[0]
+        value = latest_data[meta["key"]]
         with cols[i % 3]:
             st.markdown(f"""
 <div class="card pollutant-card" style="--pc:{meta['color']}; margin-bottom:0.8rem;">
@@ -739,10 +815,10 @@ with poll_col:
 with weather_col:
     ow_weather = load_weather(city)  # only for icon + description, not the numbers
 
-    display_temp = latest_row["temperature"].values[0]
-    display_humidity = latest_row["humidity"].values[0]
-    display_wind = latest_row["wind_speed"].values[0]
-    display_pressure = latest_row["pressure"].values[0]
+    display_temp = latest_data["temperature"]
+    display_humidity = latest_data["humidity"]
+    display_wind = latest_data["wind_speed"]
+    display_pressure = latest_data["pressure"]
 
     if ow_weather:
         owm_icon_url = f"https://openweathermap.org/img/wn/{ow_weather['icon']}@2x.png"
