@@ -56,10 +56,6 @@ def pm25_to_aqi(pm25):
 
 
 def fetch_with_retry(fetch_fn, label, city_name, max_retries=FETCH_MAX_RETRIES):
-    """Generic retry+backoff wrapper - same pattern as read_with_retry /
-    insert_with_retry below, just for the two outbound API calls. This is
-    the actual fix for Lahore: one slow Open-Meteo response used to kill
-    the whole city for that hour; now it gets 3 tries with backoff first."""
     for attempt in range(1, max_retries + 1):
         try:
             return fetch_fn()
@@ -98,21 +94,19 @@ def fetch_current_weather(lat, lon):
 
 
 def build_row(data, weather, city_name):
-    # weather may be None if Open-Meteo failed after retries - still write
-    # the pollution reading rather than lose the hour entirely. Missing
-    # weather becomes null, not a dropped row.
     entry = data["list"][0]
     weather = weather or {}
+    pm25 = entry["components"]["pm2_5"]
     return {
         "timestamp": datetime.fromtimestamp(entry["dt"], tz=timezone.utc),
         "city": city_name.capitalize(),
-        "aqi": entry["main"]["aqi"],
+        "aqi": pm25_to_aqi(pm25),
         "co": entry["components"]["co"],
         "no": entry["components"]["no"],
         "no2": entry["components"]["no2"],
         "o3": entry["components"]["o3"],
         "so2": entry["components"]["so2"],
-        "pm2_5": entry["components"]["pm2_5"],
+        "pm2_5": pm25,
         "pm10": entry["components"]["pm10"],
         "nh3": entry["components"]["nh3"],
         "temperature": weather.get("temperature"),
@@ -123,14 +117,7 @@ def build_row(data, weather, city_name):
 
 
 def read_with_retry(fg, city_name, max_retries=3):
-    # Only pull the last ~72h instead of the full offline table. This
-    # filter is pushed down by Hopsworks, so it's the difference between
-    # scanning the whole feature group (slower every week) and scanning a
-    # fixed, small window every run.
     cutoff = datetime.now(timezone.utc) - timedelta(hours=72)
-    # Hopsworks' query API expects a plain string here, not a tz-aware
-    # datetime with microseconds - passing the raw object causes a 422
-    # ("argument was not provided or it was malformed").
     cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
     for attempt in range(1, max_retries + 1):
         try:
@@ -169,9 +156,7 @@ def process_city(city):
 
     raw_cols = ["timestamp", "city", "aqi", "co", "no", "no2", "o3", "so2", "pm2_5", "pm10", "nh3","temperature", "wind_speed", "humidity", "pressure"]
     recent_raw = recent_df[raw_cols].tail(48).copy()
-
-    # Pollution is the core signal - retry hard, bail on this city this
-    # hour if it truly can't be fetched.
+    
     raw_data = fetch_with_retry(
         lambda: fetch_current(city["lat"], city["lon"]), "OpenWeather pollution", city["name"]
     )
@@ -179,8 +164,6 @@ def process_city(city):
         print(f"Skipping {city['name']} - could not fetch pollution data after retries.")
         return
 
-    # Weather is supplementary - retry, but don't lose the pollution
-    # reading just because Open-Meteo is slow/down this hour.
     weather = fetch_with_retry(
         lambda: fetch_current_weather(city["lat"], city["lon"]), "Open-Meteo weather", city["name"]
     )
@@ -219,7 +202,6 @@ def process_city(city):
     combined["target_pm25_48h"] = combined["pm2_5"].shift(-48)
     combined["target_pm25_72h"] = combined["pm2_5"].shift(-72)
 
-    # NEW: US EPA AQI targets, kept consistent with feature_engineering.py
     combined["target_aqi_us_24h"] = combined["pm2_5"].shift(-24).apply(pm25_to_aqi)
     combined["target_aqi_us_48h"] = combined["pm2_5"].shift(-48).apply(pm25_to_aqi)
     combined["target_aqi_us_72h"] = combined["pm2_5"].shift(-72).apply(pm25_to_aqi)

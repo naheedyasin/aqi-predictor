@@ -14,6 +14,26 @@ CITIES = [
     {"name": "Islamabad", "lat": 33.6844, "lon": 73.0479},
 ]
 
+
+def pm25_to_aqi(pm25):
+    """US EPA breakpoint formula - same formula used in feature_engineering.py
+    and app.py. Used here so the raw backfill CSV stores AQI on the same
+    0-500 EPA scale as everything downstream, instead of OpenWeather's own
+    coarse 1-5 'main.aqi' index."""
+    breakpoints = [
+        (0.0, 12.0, 0, 50), (12.1, 35.4, 51, 100), (35.5, 55.4, 101, 150),
+        (55.5, 150.4, 151, 200), (150.5, 250.4, 201, 300),
+        (250.5, 350.4, 301, 400), (350.5, 500.4, 401, 500),
+    ]
+    if pd.isna(pm25):
+        return None
+    pm25 = max(0.0, pm25)
+    for c_lo, c_hi, i_lo, i_hi in breakpoints:
+        if c_lo <= pm25 <= c_hi:
+            return round((i_hi - i_lo) / (c_hi - c_lo) * (pm25 - c_lo) + i_lo)
+    return 500
+
+
 def fetch_historical(lat, lon, start_date, end_date):
     url = "http://api.openweathermap.org/data/2.5/air_pollution/history"
     start_unix = int(start_date.timestamp())
@@ -34,16 +54,17 @@ def fetch_historical(lat, lon, start_date, end_date):
 def parse_historical_to_dataframe(data, city_name):
     rows = []
     for entry in data["list"]:
+        pm25 = entry["components"]["pm2_5"]
         row = {
             "timestamp": datetime.fromtimestamp(entry["dt"], tz=timezone.utc),
             "city": city_name,
-            "aqi": entry["main"]["aqi"],
+            "aqi": pm25_to_aqi(pm25),
             "co": entry["components"]["co"],
             "no": entry["components"]["no"],
             "no2": entry["components"]["no2"],
             "o3": entry["components"]["o3"],
             "so2": entry["components"]["so2"],
-            "pm2_5": entry["components"]["pm2_5"],
+            "pm2_5": pm25,
             "pm10": entry["components"]["pm10"],
             "nh3": entry["components"]["nh3"],
         }
