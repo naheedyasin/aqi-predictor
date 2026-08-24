@@ -7,3 +7,4 @@ numpy
 hopsworks
 pyarrow
 confluent-kafka
+plotly
