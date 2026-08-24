@@ -154,8 +154,6 @@ if __name__ == "__main__":
                 print(f"Registered model: aqi_rf_{city}_{horizon}")
 
     results_df = pd.DataFrame([{k: v for k, v in r.items() if k != "model"} for r in results])
-    print("\n=== Final Results ===")
-    print(results_df.to_string(index=False))
 
     results_df.to_csv("data/model_results_summary.csv", index=False)
     print("\nSaved to data/model_results_summary.csv")
