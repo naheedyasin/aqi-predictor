@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import hopsworks
 import shap
+from streamlit import fragment
 
 load_dotenv()
 st.set_page_config(page_title="AQI Predictor", page_icon="◐", layout="wide", initial_sidebar_state="collapsed")
@@ -102,7 +103,16 @@ html, body, [class*="css"] { font-family: 'Inter', -apple-system, sans-serif; co
   .stApp { animation: none; }
 }
 
-.block-container { padding-top: 0.6rem; padding-bottom: 3rem; max-width: 1440px; }
+.block-container {
+  padding-top: 0.6rem;
+  padding-bottom: 3rem;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+  max-width: 100% !important;
+}
+div[data-testid="stAppViewContainer"] .main .block-container {
+  max-width: 100% !important;
+}
 #MainMenu, footer, header { visibility: hidden; }
 section[data-testid="stSidebar"] { display: none; }
 
@@ -119,11 +129,18 @@ border: 1px solid var(--border);
 div[data-testid="stVerticalBlockBorderWrapper"] { padding: 0.4rem 0.6rem; }
 
 div[class*="st-key-trend_chart_card"],
-div[class*="st-key-forecast_chart_card"],
-div[class*="st-key-shap_chart_card"] {
+div[class*="st-key-forecast_chart_card"] {
 background: var(--bg-card);
 border-radius: 18px;
 padding: 1.3rem 1.5rem 0.6rem 1.5rem;
+box-shadow: 0 2px 10px rgba(16,22,43,.05), 0 8px 22px rgba(62,92,154,0.07);
+border: 1px solid var(--border);
+transition: .25s ease;
+}
+div[class*="st-key-shap_chart_card"] {
+background: var(--bg-card);
+border-radius: 18px;
+padding: 1.3rem 1.5rem 0.1rem 1.5rem;
 box-shadow: 0 2px 10px rgba(16,22,43,.05), 0 8px 22px rgba(62,92,154,0.07);
 border: 1px solid var(--border);
 transition: .25s ease;
@@ -144,7 +161,7 @@ backdrop-filter: blur(16px) saturate(160%);
 -webkit-backdrop-filter: blur(16px) saturate(160%);
 border-radius: 0 0 22px 22px;
 padding: 1.5rem 1.8rem;
-margin: 0 -1rem 1.8rem -1rem;
+margin: 0 -1.65rem 1.8rem -0.2rem;
 min-height: 92px;
 box-shadow: 0 10px 26px rgba(16,22,43,0.07), 0 1px 0 rgba(16,22,43,0.05);
 border-bottom: 1px solid rgba(16,22,43,0.06);
@@ -154,7 +171,9 @@ rgba(255,255,255,0.86);
 background-size: 16px 16px, auto;
 }
 div[class*="st-key-sticky_header"] div[data-testid="stHorizontalBlock"] { align-items: center; }
-
+html {
+  scrollbar-gutter: stable;
+}
 .app-title-row { display: flex; align-items: center; gap: 0.75rem; }
 .app-title-row .logo-mark { flex: 0 0 46px; width: 46px; height: 46px; display: flex; align-items: center; justify-content: center;
 color: var(--sky); background: color-mix(in srgb, var(--sky) 12%, white); border-radius: 13px;
@@ -316,18 +335,33 @@ linear-gradient(180deg, color-mix(in srgb, var(--accent-c) 5%, white) 0%, var(--
 .forecast-sub { font-size: 0.75rem; color: var(--ink-600); margin-top: 0.6rem; font-family: 'JetBrains Mono', monospace; }
 .rmse-note { font-size: 0.7rem; color: var(--muted); margin-top: 0.3rem; }
 
-div[class*="st-key-trajectory_row"] div[data-testid="stHorizontalBlock"] { align-items: stretch !important; }
-div[class*="st-key-trajectory_row"] div[data-testid="column"] { display: flex !important; height: auto; }
-div[class*="st-key-trajectory_row"] div[data-testid="column"] > div[data-testid="stVerticalBlock"] {
-  display: flex !important; flex-direction: column !important; flex: 1 !important; height: 100% !important;
+div[class*="st-key-trajectory_row"] div[class*="st-key-forecast_chart_card"],
+div[class*="st-key-trajectory_row"] div[class*="st-key-sys_chart_card"] {
+  height: 380px !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
 }
-div[class*="st-key-trajectory_row"] div[class*="st-key-forecast_chart_card"] {
-  flex: 1 !important; display: flex !important; flex-direction: column !important; justify-content: center !important;
+
+div[class*="st-key-trajectory_row"] div[class*="st-key-forecast_chart_card"] .js-plotly-plot {
+  width: 100% !important;
 }
-div[class*="st-key-trajectory_row"] div[class*="st-key-forecast_chart_card"] > div[data-testid="stVerticalBlock"] {
-  flex: 1 !important; display: flex !important; flex-direction: column !important; justify-content: center !important;
+
+div[class*="st-key-trajectory_row"] div[class*="st-key-sys_chart_card"] {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  padding: 0 !important;
 }
-div[class*="st-key-trajectory_row"] .sys-card { flex: 1 !important; height: auto !important; min-height: 0 !important; }
+
+div[class*="st-key-trajectory_row"] .sys-card {
+  height: 100% !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  justify-content: space-between !important;
+}
 
 .sys-card { border-top: 3px solid var(--accent);
 background: linear-gradient(165deg, color-mix(in srgb, var(--accent) 6%, white) 0%, var(--bg-card) 55%);
@@ -487,7 +521,7 @@ def make_forecast_line_chart(labels, values, colors, accent):
         hovertemplate="%{x}<br><b>AQI %{y}</b><extra></extra>",
     ))
     fig.update_yaxes(range=[0, max(values) * 1.35 + 10])
-    return styled_plotly_layout(fig, 260)
+    return styled_plotly_layout(fig, 306)
 
 
 # Hopsworks connection & cached loaders 
@@ -910,7 +944,8 @@ with trajectory_row:
             f'<span class="sys-value">{f"±{rmse_values[h]:.1f}" if rmse_values[h] is not None else "n/a"}</span></div>'
             for h in HORIZONS
         ])
-        st.markdown(f"""
+        with st.container(key="sys_chart_card"):
+            st.markdown(f"""
 <div class="card sys-card">
 <div class="sys-row"><span class="sys-label"><span class="sys-icon">{ICONS['cpu']}</span>Model type</span><span class="sys-value">Random Forest</span></div>
 <div class="sys-row"><span class="sys-label"><span class="sys-icon">{ICONS['clock']}</span>Forecast horizons</span><span class="sys-value">24 / 48 / 72h</span></div>
@@ -920,36 +955,46 @@ with trajectory_row:
 
 # SHAP: Why this prediction 
 st.markdown('<div class="section-title">Why This Prediction</div>', unsafe_allow_html=True)
-st.markdown('<div class="section-sub">Top factors driving the 24h forecast (SHAP feature importance)</div>', unsafe_allow_html=True)
+st.markdown('<div class="section-sub">Top factors driving each forecast horizon (SHAP feature importance)</div>', unsafe_allow_html=True)
 
-with st.container(key="shap_chart_card"):
-    try:
-        explainer = shap.TreeExplainer(models["24h"])
-        shap_values = explainer.shap_values(X_latest)
-        contributions = pd.DataFrame({
-            "feature": [FEATURE_LABELS.get(f, f) for f in FEATURE_COLUMNS],
-            "value": shap_values[0],
-        })
-        contributions["abs_value"] = contributions["value"].abs()
-        top_features = contributions.sort_values("abs_value", ascending=False).head(10).sort_values("value")
+@st.fragment
+def render_shap_section(models, X_latest, current_color, current_category):
+    shap_horizon = st.segmented_control(
+        "SHAP horizon", HORIZONS, default="24h",
+        label_visibility="collapsed", key="shap_horizon_ctrl",
+    )
+    shap_horizon = shap_horizon or "24h"
 
-        fig = go.Figure(go.Bar(
-            x=top_features["value"], y=top_features["feature"], orientation="h",
-            marker_color=[current_color if v > 0 else "#2F80ED" for v in top_features["value"]],
-            marker_line_width=0,
-            hovertemplate="%{y}<br><b>%{x:.2f} AQI</b><extra></extra>",
-        ))
-        fig.update_layout(
-            height=380, margin=dict(l=10, r=10, t=10, b=10),
-            xaxis_title="Impact on predicted AQI",
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font=dict(family="Inter", size=12, color="#4B5468"),
-            yaxis=dict(showgrid=False), xaxis=dict(showgrid=True, gridcolor="#EEF1F7", zeroline=True, zerolinecolor="#D8DEEA"),
-        )
-        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-        st.caption(f"{current_category}-colored bars push the prediction higher; blue bars pull it lower.")
-    except Exception:
-        st.info("SHAP explanation unavailable for this model right now.")
+    with st.container(key="shap_chart_card"):
+        try:
+            explainer = shap.TreeExplainer(models[shap_horizon])
+            shap_values = explainer.shap_values(X_latest)
+            contributions = pd.DataFrame({
+                "feature": [FEATURE_LABELS.get(f, f) for f in FEATURE_COLUMNS],
+                "value": shap_values[0],
+            })
+            contributions["abs_value"] = contributions["value"].abs()
+            top_features = contributions.sort_values("abs_value", ascending=False).head(10).sort_values("value")
+
+            fig = go.Figure(go.Bar(
+                x=top_features["value"], y=top_features["feature"], orientation="h",
+                marker_color=[current_color if v > 0 else "#2F80ED" for v in top_features["value"]],
+                marker_line_width=0,
+                hovertemplate="%{y}<br><b>%{x:.2f} AQI</b><extra></extra>",
+            ))
+            fig.update_layout(
+                height=310, margin=dict(l=10, r=10, t=10, b=35),
+                xaxis_title="Impact on predicted AQI",
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(family="Inter", size=12, color="#4B5468"),
+                yaxis=dict(showgrid=False), xaxis=dict(showgrid=True, gridcolor="#EEF1F7", zeroline=True, zerolinecolor="#D8DEEA"),
+            )
+            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+            st.caption(f"{current_category}-colored bars push the {shap_horizon} prediction higher; blue bars pull it lower.")
+        except Exception:
+            st.info("SHAP explanation unavailable for this model right now.")
+
+render_shap_section(models, X_latest, current_color, current_category)
 
 if st.session_state.is_refreshing:
     st.session_state.is_refreshing = False
