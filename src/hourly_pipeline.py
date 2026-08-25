@@ -21,7 +21,7 @@ API_KEY = os.getenv("OPENWEATHER_API_KEY")
 REQUEST_TIMEOUT = 10
 # Open-Meteo has been observed timing out at 10s under load (root cause of
 # the Lahore failures) - give it more room.
-WEATHER_REQUEST_TIMEOUT = 20
+WEATHER_REQUEST_TIMEOUT = 35
 FETCH_MAX_RETRIES = 3
 
 CITIES = [
