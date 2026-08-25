@@ -2,7 +2,6 @@
 # using recent history from Hopsworks, and inserts the new row back in.
 
 import os
-import json
 import time
 import tempfile
 import requests
@@ -31,71 +30,12 @@ CITIES = [
     {"name": "islamabad", "lat": 33.6844, "lon": 73.0479},
 ]
 
-RAW_COLS = ["timestamp", "city", "aqi", "co", "no", "no2", "o3", "so2",
-            "pm2_5", "pm10", "nh3", "temperature", "wind_speed", "humidity", "pressure"]
-
-NUMERIC_COLS = ["aqi", "co", "no", "no2", "o3", "so2", "pm2_5", "pm10", "nh3",
-                 "temperature", "wind_speed", "humidity", "pressure"]
-
-# Rows that failed to reach Hopsworks (pending) and a mirror of the last
-# confirmed read (raw_cache) live here, keyed per city.
-STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
-os.makedirs(STATE_DIR, exist_ok=True)
-
 temp_dir = tempfile.gettempdir()
 project = hopsworks.login(
     api_key_value=os.getenv("HOPSWORKS_API_KEY"),
     cert_folder=temp_dir
 )
 fs = project.get_feature_store()
-
-# Local state (pending buffer + raw cache)
-def _state_path(city_name, kind):
-    return os.path.join(STATE_DIR, f"{kind}_{city_name}.json")
-
-
-def _load_state_df(city_name, kind):
-    path = _state_path(city_name, kind)
-    if not os.path.exists(path):
-        return pd.DataFrame(columns=RAW_COLS)
-    try:
-        with open(path, "r") as f:
-            records = json.load(f)
-        if not records:
-            return pd.DataFrame(columns=RAW_COLS)
-        df = pd.DataFrame(records)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-        return df
-    except Exception as e:
-        print(f"Could not read {kind} state for {city_name}: {e}")
-        return pd.DataFrame(columns=RAW_COLS)
-
-
-def _save_state_df(city_name, kind, df):
-    path = _state_path(city_name, kind)
-    if df is None or df.empty:
-        if os.path.exists(path):
-            os.remove(path)
-        return
-    out = df[RAW_COLS].copy()
-    out["timestamp"] = out["timestamp"].astype(str)
-    with open(path, "w") as f:
-        json.dump(out.to_dict(orient="records"), f, default=str)
-
-
-def _coerce_numeric_dtypes(df):
-    """Hopsworks feature groups have a fixed schema (numeric features are
-    typically float64/double). A single-row DataFrame containing a None
-    becomes dtype 'object' rather than float64, and inserting an object
-    column against a double feature is a common, silent cause of insert
-    failures - this is what was almost certainly happening whenever the
-    Open-Meteo call failed. Casting explicitly avoids that regardless of
-    which columns had gaps."""
-    df = df.copy()
-    for col in NUMERIC_COLS:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
-    return df
 
 
 def pm25_to_aqi(pm25):
@@ -153,15 +93,10 @@ def fetch_current_weather(lat, lon):
     }
 
 
-def build_row(data, weather, fallback_weather, city_name):
-    """fallback_weather: dict of last-known weather values (carried forward
-    from local history) used only when the live Open-Meteo call fails, so
-    we never insert a None that breaks Hopsworks' typed schema, and never
-    silently drop an hour's pollution reading just because the weather
-    call flaked."""
+def build_row(data, weather, city_name):
     entry = data["list"][0]
+    weather = weather or {}
     pm25 = entry["components"]["pm2_5"]
-    weather = weather or fallback_weather or {}
     return {
         "timestamp": datetime.fromtimestamp(entry["dt"], tz=timezone.utc),
         "city": city_name.capitalize(),
@@ -194,10 +129,10 @@ def read_with_retry(fg, city_name, max_retries=3):
             time.sleep(10)
 
 
-def insert_with_retry(fg, rows_df, city_name, max_retries=3):
+def insert_with_retry(fg, row, city_name, max_retries=3):
     for attempt in range(1, max_retries + 1):
         try:
-            fg.insert(rows_df)
+            fg.insert(row)
             return True
         except Exception as e:
             print(f"Insert attempt {attempt}/{max_retries} failed for {city_name}: {e}")
@@ -207,71 +142,40 @@ def insert_with_retry(fg, rows_df, city_name, max_retries=3):
 
 
 def process_city(city):
-    name = city["name"]
-    print(f"Processing {name}...")
+    print(f"Processing {city['name']}...")
 
-    fg = fs.get_feature_group(name=f"aqi_features_{name}", version=1)
+    fg = fs.get_feature_group(name=f"aqi_features_{city['name']}", version=1)
 
-    recent_df = read_with_retry(fg, name)
+    recent_df = read_with_retry(fg, city["name"])
+    if recent_df is None:
+        print(f"Skipping {city['name']} - could not read data after retries.")
+        return
 
-    if recent_df is not None:
-        recent_df["timestamp"] = pd.to_datetime(recent_df["timestamp"], utc=True)
-        recent_df = recent_df.sort_values("timestamp").reset_index(drop=True)
-        confirmed_raw = recent_df[RAW_COLS].tail(72).copy()
-        # Read succeeded - refresh the local mirror so a future transient
-        # read failure still has recent history to fall back on.
-        _save_state_df(name, "raw_cache", confirmed_raw)
-    else:
-        print(f"{name}: Hopsworks read failed after retries - falling back "
-              f"to local raw cache instead of skipping the city entirely.")
-        confirmed_raw = _load_state_df(name, "raw_cache")
-        if confirmed_raw.empty:
-            print(f"Skipping {name} - no Hopsworks read and no local cache available.")
-            return
+    recent_df["timestamp"] = pd.to_datetime(recent_df["timestamp"])
+    recent_df = recent_df.sort_values("timestamp").reset_index(drop=True)
 
-    # Rows fetched in previous runs that never made it into Hopsworks.
-    pending_raw = _load_state_df(name, "pending")
-    if not pending_raw.empty:
-        print(f"{name}: retrying {len(pending_raw)} previously unconfirmed row(s).")
-
+    raw_cols = ["timestamp", "city", "aqi", "co", "no", "no2", "o3", "so2", "pm2_5", "pm10", "nh3","temperature", "wind_speed", "humidity", "pressure"]
+    recent_raw = recent_df[raw_cols].tail(48).copy()
+    
     raw_data = fetch_with_retry(
-        lambda: fetch_current(city["lat"], city["lon"]), "OpenWeather pollution", name
+        lambda: fetch_current(city["lat"], city["lon"]), "OpenWeather pollution", city["name"]
     )
     if raw_data is None:
-        print(f"Skipping {name} - could not fetch pollution data after retries.")
+        print(f"Skipping {city['name']} - could not fetch pollution data after retries.")
         return
 
     weather = fetch_with_retry(
-        lambda: fetch_current_weather(city["lat"], city["lon"]), "Open-Meteo weather", name
+        lambda: fetch_current_weather(city["lat"], city["lon"]), "Open-Meteo weather", city["name"]
     )
-
-    fallback_weather = None
     if weather is None:
-        fallback_source = pending_raw if not pending_raw.empty else confirmed_raw
-        if not fallback_source.empty:
-            last = fallback_source.sort_values("timestamp").iloc[-1]
-            fallback_weather = {
-                "temperature": last.get("temperature"),
-                "wind_speed": last.get("wind_speed"),
-                "humidity": last.get("humidity"),
-                "pressure": last.get("pressure"),
-            }
-        print(f"{name}: Open-Meteo failed - carrying forward last known "
-              f"weather instead of inserting nulls.")
+        print(f"Warning: {city['name']} - weather fetch failed after retries, "
+              f"inserting row with weather fields as null.")
 
-    new_row = build_row(raw_data, weather, fallback_weather, name)
-    new_row_df = pd.DataFrame([new_row])
+    new_row = build_row(raw_data, weather, city["name"])
 
-    # Everything still needing to land in Hopsworks: old backlog + this hour.
-    unconfirmed = pd.concat([pending_raw, new_row_df], ignore_index=True)
-    unconfirmed["timestamp"] = pd.to_datetime(unconfirmed["timestamp"], utc=True)
-    unconfirmed = unconfirmed.drop_duplicates(subset="timestamp", keep="last")
-
-    combined = pd.concat([confirmed_raw, unconfirmed], ignore_index=True)
+    combined = pd.concat([recent_raw, pd.DataFrame([new_row])], ignore_index=True)
+    combined = combined.drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
     combined["timestamp"] = pd.to_datetime(combined["timestamp"], utc=True)
-    combined = combined.drop_duplicates(subset="timestamp", keep="last") \
-                        .sort_values("timestamp").reset_index(drop=True)
-    combined = _coerce_numeric_dtypes(combined)
 
     combined["hour"] = combined["timestamp"].dt.hour.astype("int64")
     combined["day_of_week"] = combined["timestamp"].dt.dayofweek.astype("int64")
@@ -302,21 +206,13 @@ def process_city(city):
     combined["target_aqi_us_48h"] = combined["pm2_5"].shift(-48).apply(pm25_to_aqi)
     combined["target_aqi_us_72h"] = combined["pm2_5"].shift(-72).apply(pm25_to_aqi)
 
-    # Only the rows still unconfirmed need to be (re)inserted - already
-    # confirmed rows are left alone. They're recomputed against the full
-    # combined history above, so lag/rolling values are correct even after
-    # a multi-hour gap.
-    rows_to_insert = combined[combined["timestamp"].isin(unconfirmed["timestamp"])].copy()
+    latest_row = combined.tail(1)
 
-    success = insert_with_retry(fg, rows_to_insert, name)
+    success = insert_with_retry(fg, latest_row, city["name"])
     if success:
-        print(f"Inserted {len(rows_to_insert)} row(s) for {name}, "
-              f"latest at {rows_to_insert['timestamp'].max()}")
-        _save_state_df(name, "pending", pd.DataFrame(columns=RAW_COLS))
+        print(f"Inserted new row for {city['name']} at {latest_row['timestamp'].values[0]}")
     else:
-        print(f"{name}: insert failed after retries - buffering "
-              f"{len(unconfirmed)} row(s) locally to retry next run.")
-        _save_state_df(name, "pending", unconfirmed)
+        print(f"Skipping {city['name']} - could not insert after retries.")
 
 
 if __name__ == "__main__":
