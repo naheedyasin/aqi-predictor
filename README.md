@@ -157,14 +157,13 @@ This EDA directly explains the model performance differences observed in Section
 │   └── train.py                     # Automated daily training + model registry
 ├── app/
 │   ├── app.py                       # Streamlit dashboard
-│   └── requirements.txt             # Dashboard-specific dependencies
 ├── scripts/
 │   ├── eda.py                       # Exploratory data analysis + chart generation
 │   ├── eda_output/                  # Generated EDA charts
 │   ├── hopsworks_test.py            # Hopsworks connectivity smoke test
 │   └── verify_hopsworks.py          # Feature store / registry verification
 ├── .github/workflows/               # GitHub Actions CI/CD definitions
-└── requirements.txt                 # Root dependencies (used by GitHub Actions)
+└── requirements.txt                 # Root dependencies
 ```
 
 ## 13. Running Locally
