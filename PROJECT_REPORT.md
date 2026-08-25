@@ -126,7 +126,7 @@ Final production models use regularized Random Forest hyperparameters (`max_dept
 
 ## 9. Honest Assessment of Limitations
 
-- **Absolute forecasting accuracy is modest.** While every model beats the naive baseline, test R² ranges from -0.071 to 0.226 — meaningfully better than "no signal," but still far from strong predictive power in an absolute sense. Users should understand these are directional forecasts with real uncertainty, not precise point predictions.
+- **Absolute forecasting accuracy is modest.** While every model beats the naive baseline, test R² ranges from -0.071 to 0.226. Although several models have negative R² on the held-out test set, every model still outperforms the naive persistence baseline, showing useful predictive signal relative to simply carrying forward the current AQI. Users should understand these are directional forecasts with real uncertainty, not precise point predictions.
 - **The train/test R² gap indicates continued overfitting** despite regularization (`max_depth=8`, `min_samples_leaf=20`, `max_features="sqrt"`). Further tuning, stronger regularization, or — more likely to help — a larger training dataset are the probable paths to closing this gap.
 - **Single year of seasonal coverage.** The models have seen exactly one occurrence of each season. Performance on an atypical year (an unusually severe or mild winter, for instance) is untested and cannot currently be validated.
 - **Longer-horizon accuracy is weaker than 24h**, most severely for Lahore — expected in time-series forecasting generally, and amplified here by Lahore's unusually high volatility.
