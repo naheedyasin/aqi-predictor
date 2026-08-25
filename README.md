@@ -71,7 +71,7 @@ Target columns are built by shifting future values backward (e.g., `target_aqi_u
 
 **Why we changed this:** predicting a proxy (PM2.5) and converting afterward risks compounding error through the EPA formula's non-linear, piecewise structure — the same absolute PM2.5 error translates to different AQI error depending on which breakpoint segment it falls in. Predicting AQI directly is more methodologically defensible and matches the project's literal goal.
 
-**Result of the switch:** mixed but net-positive. Karachi's scores dropped somewhat, but Lahore and Islamabad improved across most horizons, and critically, the worst-case result improved substantially (previous worst R² of -0.31 improved to -0.04). We kept this change.
+**Correction during implementation:** an error in the initial AQI target computation was subsequently identified and fixed. All results reported in Section 7 reflect the corrected target calculation and are the final, validated numbers for this project.
 
 ## 7. Model Experimentation
 
@@ -88,13 +88,13 @@ We evaluated four model types against a naive persistence baseline ("tomorrow's 
 
 Nine Random Forest models were trained (3 cities × 3 forecast horizons) to predict AQI on the US EPA scale. After observing overfitting with looser tree constraints, the final models used regularized hyperparameters (`max_depth=8`, `min_samples_leaf=20`, `max_features="sqrt"`) to improve generalization.
 
-Test R² ranged from -0.13 to 0.31 across the nine city/horizon combinations, with the strongest result at Islamabad's 24h horizon (R² = 0.307). Critically, every model outperformed its naive persistence baseline (R² range: -0.89 to -0.002), confirming the models learned genuine predictive signal rather than memorizing noise — a meaningful result given how volatile hour-to-hour pollutant data is.
+Test R² ranged from -0.071 to 0.226 across the nine city/horizon combinations, with the strongest result at Islamabad's 24h horizon (R² = 0.226). Critically, every model outperformed its naive persistence baseline (R² range: -0.783 to -0.150), confirming the models learned genuine predictive signal rather than memorizing noise — a meaningful result given how volatile hour-to-hour pollutant data is.
 
-Accuracy declined at longer horizons (e.g., Islamabad: 0.307 → 0.065 → -0.132 across 24h/48h/72h), consistent with the expectation that forecast difficulty compounds over time. The current feature set uses present-moment weather rather than forecasted weather, which is the most likely lever for improving mid-to-long-range accuracy in future work.
+Accuracy declined at longer horizons (e.g., Islamabad: 0.226 → 0.027 → -0.027 across 24h/48h/72h), consistent with the expectation that forecast difficulty compounds over time. The current feature set uses present-moment weather rather than forecasted weather, which is the most likely lever for improving mid-to-long-range accuracy in future work.
 
-**Feature-count experiments:** adding extra lag points (6h, 12h), rolling standard deviation, and an hour×month interaction term were all tested and none improved test performance — a couple slightly hurt it. The leaner original feature set was already close to optimal for this amount of data.
+Feature-count experiments: adding extra lag points (6h, 12h), rolling standard deviation, and an hour×month interaction term were all tested and none improved test performance — a couple slightly hurt it. The leaner original feature set was already close to optimal for this amount of data.
 
-**Evaluation methodology:** models are evaluated on a chronological 80/20 split, never a random one (which would leak future rows into training). Each city's data is time-ordered and the most recent 20% is held out as the test set, mirroring how the model is actually used in production.
+Evaluation methodology: models are evaluated on a chronological 80/20 split, never a random one (which would leak future rows into training). Each city's data is time-ordered and the most recent 20% is held out as the test set, mirroring how the model is actually used in production.
 
 ## 8. Automated Pipelines (CI/CD)
 
@@ -107,12 +107,19 @@ Accuracy declined at longer horizons (e.g., Islamabad: 0.307 → 0.065 → -0.13
 
 Full analysis in `scripts/eda.py` and `scripts/eda_output/`. Key findings:
 
-1. **PM2.5 distribution:** Karachi is consistently moderate (mean 31.6 µg/m³); Lahore is both the most polluted (mean 99.7 µg/m³) and most volatile, with a long tail reaching ~786 µg/m³. Islamabad sits in between at 82.9 µg/m³, closer to Lahore than to Karachi.
-2. **Seasonal trend:** Lahore and Islamabad show pronounced winter smog spikes (Dec–Jan), with Lahore swinging nearly 10x between its cleanest and most polluted months. Karachi stays comparatively flat year-round, consistent with its coastal location.
-3. **Diurnal (hourly) pattern:** Lahore and Islamabad peak overnight through late morning and dip in early afternoon — a signature of nighttime temperature inversions trapping pollutants near the surface. This finding directly motivated adding temperature and wind speed as model features.
-4. **Pollutant correlations:** PM2.5/PM10 are near-perfectly correlated (as expected), CO correlates strongly with PM2.5 (shared combustion sources), and ozone behaves differently by city — reflecting differing atmospheric chemistry between coastal and inland locations.
+| City | Mean PM2.5 | Median PM2.5 | Max PM2.5 | Std Dev |
+|---|---|---|---|---|
+| Karachi | 32.6 | 23.0 | 262.0 | 30.0 |
+| Lahore | 101.5 | 57.5 | 785.6 | 107.1 |
+| Islamabad | 85.0 | 56.7 | 548.3 | 84.6 |
 
-This EDA directly explains the model performance differences observed in Section 7: Lahore's combination of highest mean pollution, widest seasonal swing, and heaviest distributional tail makes it inherently the hardest city to forecast with ~1 year of training data.
+1. **PM2.5 distribution:** Karachi is consistently the least polluted (mean 32.6 µg/m³); Lahore is both the most polluted (mean 101.5 µg/m³) and most volatile, with a long tail reaching ~785.6 µg/m³ and a standard deviation (107.1) larger than its mean — a strong right skew. Islamabad sits in between at 85.0 µg/m³, closer to Lahore than to Karachi, and shows a similarly heavy tail relative to its median.
+2. **Mean vs. median gap:** all three cities show mean well above median (Karachi 32.6 vs 23.0, Lahore 101.5 vs 57.5, Islamabad 85.0 vs 56.7), confirming pollution readings are right-skewed everywhere — typical conditions are meaningfully cleaner than the average, which is pulled up by periodic spike events.
+3. **Seasonal trend:** Lahore and Islamabad show pronounced winter smog spikes (Dec–Jan), with Lahore swinging nearly 10x between its cleanest and most polluted months. Karachi stays comparatively flat year-round, consistent with its coastal location.
+4. **Diurnal (hourly) pattern:** Lahore and Islamabad peak overnight through late morning and dip in early afternoon — a signature of nighttime temperature inversions trapping pollutants near the surface. This finding directly motivated adding temperature and wind speed as model features.
+5. **Pollutant correlations:** PM2.5/PM10 are near-perfectly correlated (as expected), CO correlates strongly with PM2.5 (shared combustion sources), and ozone behaves differently by city — reflecting differing atmospheric chemistry between coastal and inland locations.
+
+This EDA directly explains the model performance differences observed in Section 7: Lahore's combination of highest mean pollution, widest seasonal swing, and heaviest distributional tail makes it inherently the hardest city to forecast with ~1 year of training data — reflected in its negative test R² at the 48h and 72h horizons.
 
 ## 10. Dashboard Features
 
@@ -120,16 +127,19 @@ This EDA directly explains the model performance differences observed in Section
 - Real-time gauge visualization of current AQI
 - 24-hour historical trend chart
 - Current pollutant concentrations and live weather conditions
-- SHAP explainability ("Why this prediction") — shows the top features driving each forecast, color-coded by whether they push AQI up or down
+- SHAP explainability ("Why this prediction") — shows the top features driving each forecast horizon (24h/48h/72h, selectable), color-coded by whether they push AQI up or down
 - Hazardous AQI alerts — a prominent banner appears whenever current or forecasted AQI exceeds the "Unhealthy for Sensitive Groups" threshold (AQI > 150), using the same EPA breakpoints as the rest of the app for consistency
 - Model performance transparency — displays each horizon's real RMSE (pulled live from the Model Registry, not hardcoded)
 
 ## 11. Known Limitations & Future Work
 
+- **Test R² remains modest to negative for several city/horizon combinations** (notably Lahore 48h/72h and Islamabad 72h), despite consistently beating the naive persistence baseline. Absolute forecasting accuracy — not just relative improvement over baseline — is the primary area for future work.
+- **Overfitting gap between train and test R²** persists despite regularization; further hyperparameter tuning, additional regularization, or more training data are the likely next levers.
 - **Single-year seasonal coverage:** the model has only observed one occurrence of each season. Forecasting reliability for atypical years (unusually severe or mild winters) is untested. Multiple years of clean, consistent historical data would be needed to validate cross-year generalization.
 - **Longer-horizon accuracy (48h/72h) is weaker than 24h**, especially for Lahore — an expected result in time-series forecasting (uncertainty compounds with horizon length), further amplified by Lahore's high volatility.
 - **Weather features were added late in the project;** their full impact on model performance is still being evaluated at time of writing.
 - **Cyclical time encoding** (sin/cos transforms for hour and day-of-week) was identified as a potential improvement — representing hour 23 and hour 0 as adjacent rather than maximally different — and is a natural next step.
+- **Forecasted (rather than present-moment) weather** as an input feature is the most likely lever for improving mid-to-long-range accuracy.
 - **GitHub Actions scheduling delays** are a platform constraint, not a pipeline defect; a paid runner or dedicated scheduler would provide tighter timing guarantees if needed.
 
 ## 12. Repository Structure
