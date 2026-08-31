@@ -122,6 +122,14 @@ Final production models use regularized Random Forest hyperparameters (`max_dept
 
 **A known and documented platform limitation:** GitHub Actions' shared scheduler does not guarantee exact execution timing, and hourly jobs can be delayed — particularly at the top of the hour, when many workflows across the entire GitHub platform fire simultaneously. This was mitigated by offsetting the cron schedule to an uncommon minute (`:07` past the hour), a standard community workaround, though delays of up to roughly an hour can still occur. This is explicitly called out as a platform constraint rather than a defect in the pipeline's own logic.
 
+**Update:** The hourly workflow ran reliably at its intended cadence for several weeks after 
+deployment. For the past week, however, and without any changes to the workflow configuration 
+or pipeline code, it has been running only around 4-5 times per day rather than 24. Since this 
+shift stems from GitHub's shared scheduler prioritization under load rather than any defect 
+introduced into the workflow file or pipeline code, and is outside the project's control, the 
+decision (confirmed with the project mentor) was to document this behavior rather than pursue 
+further fixes.
+
 ---
 
 ## 9. Honest Assessment of Limitations

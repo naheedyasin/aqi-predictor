@@ -139,6 +139,13 @@ Runs hourly through GitHub Actions and:
 
 Retry logic and per-city error isolation are used to improve reliability.
 
+> **Note:** Although the workflow is configured to run hourly via cron, GitHub Actions' 
+> shared scheduler does not guarantee exact timing. The workflow ran as expected for several 
+> weeks after deployment, but for the past week has been running approximately 4-5 times per 
+> day rather than 24, without any changes made to the workflow file or pipeline code. This is 
+> a known GitHub Actions platform limitation and does not indicate a failure in the pipeline 
+> logic. Per mentor guidance, this has been documented rather than treated as a bug.
+
 ### Daily Training Pipeline
 
 `src/train.py`
@@ -149,8 +156,6 @@ Runs daily and:
 2. Trains the nine forecasting models
 3. Evaluates their performance
 4. Registers new model versions in Hopsworks
-
-GitHub Actions scheduling can occasionally delay workflow execution because exact cron timing is not guaranteed.
 
 ---
 
