@@ -130,6 +130,9 @@ introduced into the workflow file or pipeline code, and is outside the project's
 decision (confirmed with the project mentor) was to document this behavior rather than pursue 
 further fixes.
 
+**A further platform limitation was observed with Hopsworks:** occasionally, a valid data insertion may not appear immediately in the Feature Store, despite the pipeline completing successfully.
+
+
 ---
 
 ## 9. Honest Assessment of Limitations
